@@ -1,0 +1,507 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Red Hulk VPN — Admin Panel</title>
+<style>
+  :root {
+    --blue: #0A8AFF; --red: #E0312C; --ink: #1A2332; --muted: #64748B;
+    --bg: #F2F6FC; --card: #FFFFFF; --line: #DCE4EE;
+    --green: #22C55E; --amber: #F59E0B;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+         background: var(--bg); color: var(--ink); }
+  header { background: var(--ink); color: #fff; padding: 14px 20px;
+           display: flex; align-items: center; gap: 12px; }
+  header h1 { font-size: 18px; margin: 0; flex: 1; }
+  header h1 span { color: var(--red); }
+  header button { background: transparent; color: #fff; border: 1px solid #556;
+                  border-radius: 8px; padding: 6px 12px; cursor: pointer; }
+  main { max-width: 1080px; margin: 0 auto; padding: 20px; }
+  .card { background: var(--card); border: 1px solid var(--line);
+          border-radius: 12px; padding: 18px; margin-bottom: 16px; }
+  .demo-banner { background: #FEF3C7; border: 1px solid var(--amber);
+                 color: #92400E; border-radius: 10px; padding: 10px 14px;
+                 margin-bottom: 16px; font-weight: 600; }
+  .error { background: #FDECEC; border: 1px solid var(--red); color: #991B1B;
+           border-radius: 10px; padding: 10px 14px; margin-bottom: 16px; }
+  label { display: block; font-size: 13px; color: var(--muted);
+          margin: 12px 0 4px; }
+  input[type=email], input[type=password], input[type=text] {
+    width: 100%; padding: 10px 12px; border: 1px solid var(--line);
+    border-radius: 8px; font-size: 15px; }
+  button.primary { background: var(--blue); color: #fff; border: none;
+                   border-radius: 8px; padding: 10px 18px; font-size: 15px;
+                   cursor: pointer; margin-top: 16px; }
+  button.primary:disabled { opacity: .5; cursor: default; }
+  .tabs { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
+  .tabs button { background: var(--card); border: 1px solid var(--line);
+                 border-radius: 999px; padding: 8px 16px; cursor: pointer;
+                 font-size: 14px; }
+  .tabs button.active { background: var(--blue); color: #fff;
+                        border-color: var(--blue); }
+  .tabs button .badge { background: var(--red); color: #fff; border-radius: 999px;
+                        padding: 1px 7px; font-size: 12px; margin-left: 4px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+          gap: 12px; }
+  .stat { background: var(--card); border: 1px solid var(--line);
+          border-radius: 12px; padding: 14px; }
+  .stat .n { font-size: 28px; font-weight: 700; }
+  .stat .l { font-size: 13px; color: var(--muted); margin-top: 2px; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid var(--line);
+           vertical-align: top; word-break: break-word; }
+  th { color: var(--muted); font-size: 12px; text-transform: uppercase; }
+  .pill { display: inline-block; border-radius: 999px; padding: 2px 10px;
+          font-size: 12px; font-weight: 700; color: #fff; }
+  .pill.active { background: var(--green); }
+  .pill.pending { background: var(--amber); }
+  .pill.expired, .pill.revoked, .pill.rejected { background: var(--red); }
+  .pill.approved { background: var(--green); }
+  .pill.beta { background: var(--blue); }
+  .rowbtn { background: #fff; border: 1px solid var(--line); border-radius: 8px;
+            padding: 5px 10px; cursor: pointer; font-size: 13px; margin: 2px 2px 2px 0; }
+  .rowbtn.approve { border-color: var(--green); color: #15803D; }
+  .rowbtn.reject, .rowbtn.revoke { border-color: var(--red); color: var(--red); }
+  .muted { color: var(--muted); font-size: 13px; }
+  .wrap { overflow-x: auto; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Red Hulk VPN <span>— Admin Panel</span></h1>
+  <button id="logoutBtn" hidden>Logout</button>
+</header>
+<main>
+  <div id="demoBanner" class="demo-banner" hidden>
+    DEMO MODE — showing sample data. No live API calls are made.
+    Remove <code>?demo=1</code> from the URL to use the real API.
+  </div>
+  <div id="errBox" class="error" hidden></div>
+
+  <!-- Login -->
+  <section id="loginView" class="card" style="max-width: 420px; margin: 40px auto;">
+    <h2 style="margin-top:0">Admin login</h2>
+    <p class="muted">Sign in with the admin account (created with
+      <code>rhapi/cli.py create-admin</code> on the UK server).</p>
+    <label for="email">Email</label>
+    <input id="email" type="email" autocomplete="username"
+           placeholder="admin@redhulk.local">
+    <label for="password">Password</label>
+    <input id="password" type="password" autocomplete="current-password"
+           placeholder="Admin password">
+    <button id="loginBtn" class="primary">Login</button>
+    <p id="loginMsg" class="muted"></p>
+  </section>
+
+  <!-- Main -->
+  <section id="mainView" hidden>
+    <div class="tabs">
+      <button data-tab="overview" class="active">Overview</button>
+      <button data-tab="payments">Payments <span class="badge" id="payBadge" hidden></span></button>
+      <button data-tab="users">Users</button>
+      <button data-tab="resets">Device Resets <span class="badge" id="resetBadge" hidden></span></button>
+    </div>
+
+    <div id="tab-overview">
+      <div class="grid" id="statGrid"></div>
+      <div class="card">
+        <h3 style="margin-top:0">Servers</h3>
+        <div class="wrap"><table id="serverTable">
+          <thead><tr><th>Server</th><th>Users</th><th>Status</th></tr></thead>
+          <tbody></tbody>
+        </table></div>
+        <p id="bwLine" class="muted"></p>
+      </div>
+    </div>
+
+    <div id="tab-payments" hidden>
+      <div class="card">
+        <div class="tabs" id="payFilter">
+          <button data-f="pending" class="active">Pending</button>
+          <button data-f="approved">Approved</button>
+          <button data-f="rejected">Rejected</button>
+        </div>
+        <div class="wrap"><table id="payTable">
+          <thead><tr><th>User</th><th>To</th><th>Payer</th><th>From</th>
+                      <th>Holder / TID</th><th>Submitted</th><th>Status</th><th></th></tr></thead>
+          <tbody></tbody>
+        </table></div>
+      </div>
+    </div>
+
+    <div id="tab-users" hidden>
+      <div class="card">
+        <div class="wrap"><table id="userTable">
+          <thead><tr><th>Username</th><th>Email</th><th>Status</th><th>Expires</th>
+                      <th>Days left</th><th>Beta</th><th>Device</th><th>WG servers</th><th></th></tr></thead>
+          <tbody></tbody>
+        </table></div>
+      </div>
+    </div>
+
+    <div id="tab-resets" hidden>
+      <div class="card">
+        <div class="wrap"><table id="resetTable">
+          <thead><tr><th>Username</th><th>Email</th><th>Requested</th><th></th></tr></thead>
+          <tbody></tbody>
+        </table></div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<script>
+"use strict";
+/* Red Hulk VPN admin panel — Batch 4.
+ *
+ * API base: the DuckDNS hostname (live from the Day 5 deploy).
+ * Until DuckDNS + Let's Encrypt land, use the UK node's IP instead:
+ *   https://209.250.227.225:8443/api/v1
+ * Override with ?api=<base-url> (no trailing slash), e.g. for testing:
+ *   admin.html?api=https://209.250.227.225:8443/api/v1
+ *
+ * The admin token lives in memory ONLY — it is never stored in
+ * localStorage/cookies, so closing the tab logs the admin out.
+ * CORS: the API must send Access-Control-Allow-Origin for this page's
+ * origin (see DEPLOY-ADMIN.md) or the browser blocks every call.
+ */
+var params = new URLSearchParams(location.search);
+var DEMO = params.get("demo") === "1";
+var API_BASE = params.get("api") || "https://redhulk-vpn.duckdns.org:8443/api/v1";
+var token = null;           // in memory only
+var deviceId = "admin-" + Math.random().toString(36).slice(2, 10);
+var payFilter = "pending";
+
+var $ = function (id) { return document.getElementById(id); };
+
+function esc(v) {
+  return String(v == null ? "" : v).replace(/[&<>"']/g, function (c) {
+    return {"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c];
+  });
+}
+function fmtDate(iso) {
+  if (!iso) return "—";
+  var d = new Date(iso);
+  return isNaN(d) ? esc(iso) : d.toLocaleDateString("en-GB", {
+    day: "numeric", month: "short", year: "numeric"});
+}
+function showErr(msg) {
+  var box = $("errBox");
+  if (!msg) { box.hidden = true; box.textContent = ""; return; }
+  box.hidden = false; box.textContent = msg;
+}
+function pill(status) {
+  var cls = {"active": "active", "pending": "pending", "expired": "expired",
+             "revoked": "revoked", "approved": "approved",
+             "rejected": "rejected"}[status] || "";
+  return '<span class="pill ' + cls + '">' + esc(status || "—") + "</span>";
+}
+
+/* ---------- demo data (only when ?demo=1) ---------- */
+var DEMO_DATA = {
+  stats: {total_users: 10, limit: 100, slots_left: 90, pending_payments: 2,
+          pending_device_resets: 1, bandwidth: null, alerts: [],
+          users_per_server: {uk: {users: 7, status: "up"},
+                             ph: {users: 3, status: "up"}}},
+  payments: [
+    {id: 3, username: "ahmed_khan", email: "ahmed@example.com",
+     to_account: "jazzcash", payer_name: "Ahmed Khan",
+     payer_email: "ahmed@example.com", from_account: "sadapay",
+     holder_name: "Ahmed Khan", tid: "TXN-88213", status: "pending",
+     created_at: "2026-11-01T08:12:00Z"},
+    {id: 2, username: "sara_ali", email: "sara@example.com",
+     to_account: "nayapay", payer_name: "Sara Ali",
+     payer_email: "sara@example.com", from_account: "jazzcash",
+     holder_name: "Sara Ali", tid: "TXN-88190", status: "pending",
+     created_at: "2026-11-01T07:40:00Z"},
+    {id: 1, username: "ahmed_khan", email: "ahmed@example.com",
+     to_account: "jazzcash", payer_name: "Ahmed Khan",
+     payer_email: "ahmed@example.com", from_account: "easypaisa",
+     holder_name: "Ahmed Khan", tid: "TXN-88001", status: "approved",
+     created_at: "2026-10-31T09:00:00Z"}
+  ],
+  users: [
+    {id: 1, username: "ahmed_khan", email: "ahmed@example.com",
+     subscription_status: "active", expires_at: "2026-11-30T00:00:00Z",
+     days_left: 29, beta: true, device_bound: true, wg_servers: ["uk"]},
+    {id: 2, username: "sara_ali", email: "sara@example.com",
+     subscription_status: "pending", expires_at: null, days_left: null,
+     beta: true, device_bound: true, wg_servers: []},
+    {id: 3, username: "usman_99", email: "usman@example.com",
+     subscription_status: "expired", expires_at: "2026-10-28T00:00:00Z",
+     days_left: 0, beta: false, device_bound: false, wg_servers: ["ph"]}
+  ],
+  resets: [
+    {id: 1, username: "usman_99", email: "usman@example.com",
+     requested_at: "2026-11-01T06:30:00Z", status: "pending"}
+  ]
+};
+
+/* ---------- API ---------- */
+function api(method, path, body) {
+  if (DEMO) return Promise.reject(new Error("demo mode — no network"));
+  var opts = {method: method, headers: {"Accept": "application/json"}};
+  if (token) opts.headers.Authorization = "Bearer " + token;
+  if (body !== undefined) {
+    opts.headers["Content-Type"] = "application/json";
+    opts.body = JSON.stringify(body);
+  }
+  return fetch(API_BASE + path, opts).then(function (resp) {
+    return resp.json().catch(function () { return {}; }).then(function (j) {
+      if (!resp.ok) {
+        var e = new Error(j.message || ("HTTP " + resp.status));
+        e.status = resp.status; e.code = j.error; throw e;
+      }
+      return j;
+    });
+  }).catch(function (e) {
+    if (e && e.message && e.message.indexOf("Failed to fetch") !== -1) {
+      throw new Error("Cannot reach the API (" + API_BASE + "). "
+        + "Check the server is up and CORS allows this page — see DEPLOY-ADMIN.md.");
+    }
+    throw e;
+  });
+}
+
+/* ---------- login ---------- */
+$("loginBtn").addEventListener("click", function () {
+  showErr(null);
+  $("loginMsg").textContent = "";
+  var email = $("email").value.trim();
+  var password = $("password").value;
+  if (!email || !password) { showErr("Email and password are required."); return; }
+  $("loginBtn").disabled = true;
+  $("loginMsg").textContent = "Signing in…";
+  if (DEMO) {
+    token = "demo";
+    enterMain();
+    return;
+  }
+  api("POST", "/auth/login",
+      {email: email, password: password, device_id: deviceId})
+    .then(function (j) {
+      token = j.token;
+      return api("GET", "/admin/stats");   // proves this account is an admin
+    })
+    .then(enterMain)
+    .catch(function (e) {
+      token = null;
+      $("loginBtn").disabled = false;
+      $("loginMsg").textContent = "";
+      if (e.status === 403) {
+        showErr("This account is not an admin. Only the admin account "
+          + "(created with rhapi/cli.py create-admin) can open this panel.");
+      } else if (e.status === 401) {
+        showErr("Wrong email or password.");
+      } else {
+        showErr("Login failed: " + e.message);
+      }
+    });
+});
+$("logoutBtn").addEventListener("click", function () {
+  token = null;
+  $("mainView").hidden = true;
+  $("logoutBtn").hidden = true;
+  $("loginView").hidden = false;
+  $("loginBtn").disabled = false;
+  $("password").value = "";
+  showErr(null);
+});
+function enterMain() {
+  $("loginView").hidden = true;
+  $("mainView").hidden = false;
+  $("logoutBtn").hidden = false;
+  $("loginBtn").disabled = false;
+  $("loginMsg").textContent = "";
+  loadAll();
+}
+
+/* ---------- tabs ---------- */
+document.querySelectorAll(".tabs button[data-tab]").forEach(function (b) {
+  b.addEventListener("click", function () {
+    document.querySelectorAll(".tabs button[data-tab]").forEach(function (x) {
+      x.classList.remove("active");
+    });
+    b.classList.add("active");
+    ["overview", "payments", "users", "resets"].forEach(function (t) {
+      $("tab-" + t).hidden = (t !== b.getAttribute("data-tab"));
+    });
+  });
+});
+document.querySelectorAll("#payFilter button").forEach(function (b) {
+  b.addEventListener("click", function () {
+    document.querySelectorAll("#payFilter button").forEach(function (x) {
+      x.classList.remove("active");
+    });
+    b.classList.add("active");
+    payFilter = b.getAttribute("data-f");
+    loadPayments();
+  });
+});
+
+/* ---------- loaders ---------- */
+function loadAll() { loadStats(); loadPayments(); loadUsers(); loadResets(); }
+
+function loadStats() {
+  var render = function (s) {
+    $("statGrid").innerHTML =
+      statCard(s.total_users, "Total users") +
+      statCard(s.slots_left + " / " + s.limit, "Slots left") +
+      statCard(s.pending_payments, "Pending payments") +
+      statCard(s.pending_device_resets, "Pending device resets");
+    var rows = "";
+    Object.keys(s.users_per_server || {}).forEach(function (id) {
+      var sv = s.users_per_server[id];
+      rows += "<tr><td>" + esc(id.toUpperCase()) + "</td><td>"
+        + esc(sv.users) + "</td><td>" + esc(sv.status) + "</td></tr>";
+    });
+    document.querySelector("#serverTable tbody").innerHTML =
+      rows || '<tr><td colspan="3" class="muted">No servers enabled yet.</td></tr>';
+    var bw = s.bandwidth;
+    $("bwLine").textContent = bw && bw.rx_bytes != null
+      ? "Bandwidth this month: " + fmtBytes(bw.rx_bytes + bw.tx_bytes)
+        + " of 1 TB" + (s.alerts && s.alerts.length
+          ? " — ALERT: " + s.alerts.join(", ") : "")
+      : "Bandwidth: not reported yet (vnstat not installed on the server).";
+    var pb = $("payBadge"), rb = $("resetBadge");
+    pb.hidden = !s.pending_payments; pb.textContent = s.pending_payments || "";
+    rb.hidden = !s.pending_device_resets; rb.textContent = s.pending_device_resets || "";
+  };
+  if (DEMO) { render(DEMO_DATA.stats); return; }
+  api("GET", "/admin/stats").then(render).catch(function (e) {
+    showErr("Could not load stats: " + e.message);
+  });
+}
+function statCard(n, label) {
+  return '<div class="stat"><div class="n">' + esc(n) + '</div>'
+    + '<div class="l">' + esc(label) + "</div></div>";
+}
+function fmtBytes(b) {
+  if (b < 1024 * 1024) return (b / 1024).toFixed(1) + " KB";
+  if (b < 1024 * 1024 * 1024) return (b / 1048576).toFixed(1) + " MB";
+  return (b / 1073741824).toFixed(2) + " GB";
+}
+
+function loadPayments() {
+  var render = function (list) {
+    var rows = list.filter(function (p) { return p.status === payFilter; })
+      .map(function (p) {
+        var actions = "";
+        if (p.status === "pending") {
+          actions = '<button class="rowbtn approve" data-act="approve" data-id="'
+            + p.id + '">Approve</button>'
+            + '<button class="rowbtn reject" data-act="reject" data-id="'
+            + p.id + '">Reject</button>';
+        }
+        return "<tr><td>" + esc(p.username) + "<br><span class='muted'>"
+          + esc(p.email) + "</span></td><td>" + esc(p.to_account) + "</td><td>"
+          + esc(p.payer_name) + "<br><span class='muted'>" + esc(p.payer_email)
+          + "</span></td><td>" + esc(p.from_account) + "</td><td>"
+          + esc(p.holder_name) + "<br><span class='muted'>" + esc(p.tid)
+          + "</span></td><td>" + fmtDate(p.created_at) + "</td><td>"
+          + pill(p.status) + "</td><td>" + actions + "</td></tr>";
+      }).join("");
+    document.querySelector("#payTable tbody").innerHTML = rows
+      || '<tr><td colspan="8" class="muted">No ' + esc(payFilter)
+        + ' payments.</td></tr>';
+  };
+  if (DEMO) { render(DEMO_DATA.payments); return; }
+  api("GET", "/admin/payments?status=" + payFilter).then(function (j) {
+    render(j.payments || []);
+  }).catch(function (e) { showErr("Could not load payments: " + e.message); });
+}
+
+function loadUsers() {
+  var render = function (list) {
+    var rows = list.map(function (u) {
+      return "<tr><td>" + esc(u.username) + "</td><td>" + esc(u.email)
+        + "</td><td>" + pill(u.subscription_status) + "</td><td>"
+        + fmtDate(u.expires_at) + "</td><td>"
+        + (u.days_left == null ? "—" : esc(u.days_left)) + "</td><td>"
+        + (u.beta ? '<span class="pill beta">beta</span>' : "—") + "</td><td>"
+        + (u.device_bound ? "Bound" : "—") + "</td><td>"
+        + esc((u.wg_servers || []).join(", ") || "—") + "</td><td>"
+        + '<button class="rowbtn" data-act="reset" data-id="' + u.id
+        + '" data-name="' + esc(u.username) + '">Device Reset</button>'
+        + '<button class="rowbtn revoke" data-act="revoke" data-id="' + u.id
+        + '" data-name="' + esc(u.username) + '">Revoke</button></td></tr>';
+    }).join("");
+    document.querySelector("#userTable tbody").innerHTML = rows
+      || '<tr><td colspan="9" class="muted">No users yet.</td></tr>';
+  };
+  if (DEMO) { render(DEMO_DATA.users); return; }
+  api("GET", "/admin/users").then(function (j) {
+    render(j.users || []);
+  }).catch(function (e) { showErr("Could not load users: " + e.message); });
+}
+
+function loadResets() {
+  var render = function (list) {
+    var rows = list.map(function (r) {
+      return "<tr><td>" + esc(r.username) + "</td><td>" + esc(r.email)
+        + "</td><td>" + fmtDate(r.requested_at) + "</td><td>"
+        + '<button class="rowbtn approve" data-act="reset-approve" data-id="'
+        + r.user_id + '" data-name="' + esc(r.username)
+        + '">Approve</button></td></tr>';
+    }).join("");
+    document.querySelector("#resetTable tbody").innerHTML = rows
+      || '<tr><td colspan="4" class="muted">No pending device resets.</td></tr>';
+  };
+  if (DEMO) { render(DEMO_DATA.resets); return; }
+  api("GET", "/admin/device-resets").then(function (j) {
+    render(j.device_resets || []);
+  }).catch(function (e) { showErr("Could not load device resets: " + e.message); });
+}
+
+/* ---------- row actions (event delegation) ---------- */
+document.addEventListener("click", function (ev) {
+  var b = ev.target.closest("button[data-act]");
+  if (!b) return;
+  var act = b.getAttribute("data-act");
+  var id = b.getAttribute("data-id");
+  var name = b.getAttribute("data-name") || ("#" + id);
+  if (DEMO) { alert("Demo mode — this action does nothing."); return; }
+
+  if (act === "approve") {
+    if (!confirm("Approve payment #" + id + "? This activates the user's "
+        + "subscription for 30 days.")) return;
+    api("POST", "/admin/payments/" + id + "/approve", {}).then(function (j) {
+      alert("Approved. New expiry: " + fmtDate(j.expires_at));
+      loadPayments(); loadStats(); loadUsers();
+    }).catch(function (e) { showErr("Approve failed: " + e.message); });
+  } else if (act === "reject") {
+    var reason = prompt("Reject payment #" + id + " — reason (optional):", "");
+    if (reason === null) return;
+    api("POST", "/admin/payments/" + id + "/reject", {reason: reason})
+      .then(function () { loadPayments(); loadStats(); })
+      .catch(function (e) { showErr("Reject failed: " + e.message); });
+  } else if (act === "reset" || act === "reset-approve") {
+    if (!confirm("Clear the device binding for " + name
+        + "? They can then log in from a new phone.")) return;
+    api("POST", "/admin/users/" + id + "/device-reset", {}).then(function () {
+      alert("Device binding cleared for " + name + ".");
+      loadUsers(); loadResets(); loadStats();
+    }).catch(function (e) { showErr("Device reset failed: " + e.message); });
+  } else if (act === "revoke") {
+    if (!confirm("REVOKE " + name + "? This disables the account and removes "
+        + "their WireGuard peers and OpenVPN certificate. This cannot be undone "
+        + "from here.")) return;
+    api("POST", "/admin/users/" + id + "/revoke", {}).then(function (j) {
+      alert(j.message || ("Revoked " + name + "."));
+      loadUsers(); loadStats();
+    }).catch(function (e) { showErr("Revoke failed: " + e.message); });
+  }
+});
+
+/* ---------- demo mode entry ---------- */
+if (DEMO) {
+  $("demoBanner").hidden = false;
+  token = "demo";
+  enterMain();
+}
+</script>
+</body>
+</html>
