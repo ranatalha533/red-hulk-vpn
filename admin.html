@@ -536,7 +536,10 @@ function loadResets() {
         + "</td><td>" + fmtDate(r.requested_at) + "</td><td>"
         + '<button class="rowbtn approve" data-act="reset-approve" data-id="'
         + r.user_id + '" data-name="' + esc(r.username)
-        + '">Approve</button></td></tr>';
+        + '">Approve</button>'
+        + '<button class="rowbtn reject" data-act="reset-reject" data-id="'
+        + r.user_id + '" data-name="' + esc(r.username)
+        + '">Not approved</button></td></tr>';
     }).join("");
     document.querySelector("#resetTable tbody").innerHTML = rows
       || '<tr><td colspan="4" class="muted">No pending device resets.</td></tr>';
@@ -576,6 +579,17 @@ document.addEventListener("click", function (ev) {
       alert("Device binding cleared for " + name + ".");
       loadUsers(); loadResets(); loadStats();
     }).catch(function (e) { showErr("Device reset failed: " + e.message); });
+  } else if (act === "reset-reject") {
+    /* v9.4: reject a mistaken reset request — the user's device stays
+     * bound exactly as it is. No reason box (only cancel-premium and
+     * delete ask for one). */
+    if (!confirm("Reject the device-reset request from " + name
+        + "? Their device will stay exactly as it is.")) return;
+    api("POST", "/admin/users/" + id + "/device-reset/reject", {})
+      .then(function () {
+        alert("Device-reset request rejected for " + name + ".");
+        loadResets(); loadStats();
+      }).catch(function (e) { showErr("Reject failed: " + e.message); });
   } else if (act === "revoke") {
     if (!confirm("REVOKE " + name + "? This disables the account and removes "
         + "their WireGuard peers and OpenVPN certificate. This cannot be undone "
@@ -586,18 +600,26 @@ document.addEventListener("click", function (ev) {
     }).catch(function (e) { showErr("Revoke failed: " + e.message); });
   } else if (act === "cancel-premium") {
     /* v9.3: premium ends, user goes back to free; a still-running
-     * trial resumes, device binding and keys are kept. */
+     * trial resumes, device binding and keys are kept.
+     * v9.4: optional reason — shown to the user in their app. */
     if (!confirm("Cancel premium for " + name + "? Their premium will end "
         + "and they will go back to free. If their free trial is still "
         + "running, the trial continues.")) return;
-    api("POST", "/admin/users/" + id + "/cancel-premium", {})
+    var cancelReason = prompt("Waja likhein (user ko app me dikhe gi) — "
+        + "khali chhorein to koi waja nahi dikhe gi:", "");
+    if (cancelReason === null) return;
+    cancelReason = cancelReason.trim();
+    var cancelBody = cancelReason ? {reason: cancelReason} : {};
+    api("POST", "/admin/users/" + id + "/cancel-premium", cancelBody)
       .then(function () {
         alert("Premium cancelled for " + name + ".");
         loadUsers(); loadStats();
       }).catch(function (e) { showErr("Cancel premium failed: " + e.message); });
   } else if (act === "delete") {
     /* v9.3: two-step — confirm, then type the username to confirm.
-     * Deletes the account, its keys, tokens and payment records. */
+     * Deletes the account, its keys, tokens and payment records.
+     * v9.4: optional reason — shown to the user at login (their
+     * account is gone, so the reason survives in deleted_accounts). */
     if (!confirm("DELETE the account " + name + "? This removes their keys, "
         + "tokens and payment records, and they will not be able to log in "
         + "again. This cannot be undone.")) return;
@@ -607,7 +629,12 @@ document.addEventListener("click", function (ev) {
       showErr("Username did not match — account NOT deleted.");
       return;
     }
-    api("DELETE", "/admin/users/" + id).then(function () {
+    var deleteReason = prompt("Waja likhein (user ko login par dikhe gi) — "
+        + "khali chhorein to koi waja nahi dikhe gi:", "");
+    if (deleteReason === null) return;
+    deleteReason = deleteReason.trim();
+    var deleteBody = deleteReason ? {reason: deleteReason} : undefined;
+    api("DELETE", "/admin/users/" + id, deleteBody).then(function () {
       alert("Account " + name + " deleted.");
       loadUsers(); loadStats();
     }).catch(function (e) { showErr("Delete failed: " + e.message); });
