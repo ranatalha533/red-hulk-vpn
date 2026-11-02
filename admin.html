@@ -113,7 +113,8 @@
       <div class="card">
         <h3 style="margin-top:0">Servers</h3>
         <div class="wrap"><table id="serverTable">
-          <thead><tr><th>Server</th><th>Users</th><th>Status</th></tr></thead>
+          <thead><tr><th>Server</th><th>Users</th><th>Status</th>
+                      <th>Bandwidth used / capacity</th></tr></thead>
           <tbody></tbody>
         </table></div>
         <p id="bwLine" class="muted"></p>
@@ -138,7 +139,8 @@
     <div id="tab-users" hidden>
       <div class="card">
         <div class="wrap"><table id="userTable">
-          <thead><tr><th>Username</th><th>Email</th><th>Status</th><th>Expires</th>
+          <thead><tr><th>Username</th><th>Email</th><th>Status</th><th>Package</th>
+                      <th>Data used / total</th><th>Expires</th>
                       <th>Days left</th><th>Beta</th><th>Device</th><th>WG servers</th><th></th></tr></thead>
           <tbody></tbody>
         </table></div>
@@ -158,9 +160,13 @@
 
 <script>
 "use strict";
-/* Red Hulk VPN admin panel — Batch 4, v9.3 (2026-11-02): Status badges
- * (Premium / Free Trial / Grace / Expired / Revoked / Pending) + Cancel
- * Premium + Delete Account per user; stable device id (v17) kept.
+/* Red Hulk VPN admin panel — Batch 4, v9.5 (2026-11-02): data packages
+ * (Basic 20 GB / Rs 150, Standard 30 GB / Rs 200, Plus 50 GB / Rs 300)
+ * + package picker on payment approval + per-user wallet (package,
+ * used / remaining) in the Users table + per-server bandwidth usage
+ * and 50/70/80/90% alerts in Overview. v9.3 Status badges + Cancel
+ * Premium + Delete Account and v9.4 Not approved + reason boxes are
+ * kept; stable device id (v17) kept.
  *
  * API base: the DuckDNS hostname (live from the Day 5 deploy).
  * Until DuckDNS + Let's Encrypt land, use the UK node's IP instead:
@@ -271,22 +277,37 @@ var DEMO_DATA = {
   stats: {total_users: 10, limit: 100, slots_left: 90, pending_payments: 2,
           pending_device_resets: 1, bandwidth: null, alerts: [],
           users_per_server: {uk: {users: 7, status: "up"},
-                             ph: {users: 3, status: "up"}}},
+                             ph: {users: 3, status: "up"}},
+          server_usage: {uk: {used_bytes: 1288490188800,
+                              capacity_bytes: 2199023255552, pct: 58.59,
+                              alerts: ["uk_bandwidth_50pct"]},
+                         ph: {used_bytes: 214748364800,
+                              capacity_bytes: 1099511627776, pct: 19.53,
+                              alerts: []}},
+          packages: [{id: "basic", name: "Basic", price_pkr: 150,
+                      data_gb: 20, validity_days: 30},
+                     {id: "standard", name: "Standard", price_pkr: 200,
+                      data_gb: 30, validity_days: 30},
+                     {id: "plus", name: "Plus", price_pkr: 300,
+                      data_gb: 50, validity_days: 30}]},
   payments: [
     {id: 3, username: "ahmed_khan", email: "ahmed@example.com",
      to_account: "jazzcash", payer_name: "Ahmed Khan",
      payer_email: "ahmed@example.com", from_account: "sadapay",
      holder_name: "Ahmed Khan", tid: "TXN-88213", status: "pending",
+     package_id: "standard",
      created_at: "2026-11-01T08:12:00Z"},
     {id: 2, username: "sara_ali", email: "sara@example.com",
      to_account: "nayapay", payer_name: "Sara Ali",
      payer_email: "sara@example.com", from_account: "jazzcash",
      holder_name: "Sara Ali", tid: "TXN-88190", status: "pending",
+     package_id: "plus",
      created_at: "2026-11-01T07:40:00Z"},
     {id: 1, username: "ahmed_khan", email: "ahmed@example.com",
      to_account: "jazzcash", payer_name: "Ahmed Khan",
      payer_email: "ahmed@example.com", from_account: "easypaisa",
      holder_name: "Ahmed Khan", tid: "TXN-88001", status: "approved",
+     package_id: "standard",
      created_at: "2026-10-31T09:00:00Z"}
   ],
   users: [
@@ -295,18 +316,30 @@ var DEMO_DATA = {
      days_left: 29, beta: false, device_bound: true, wg_servers: ["uk"],
      plan: "premium", trial_active: false, trial_days_left: 0,
      in_grace_period: false, grace_days_left: 0, expired: false,
+     data_exhausted: false,
+     data_wallet: {package: "standard", total_bytes: 32212254720,
+                   used_bytes: 12884901888, remaining_bytes: 19327352832,
+                   expires_at: "2026-11-30T00:00:00Z"},
      is_admin: false},
     {id: 2, username: "sara_ali", email: "sara@example.com",
      subscription_status: "pending", expires_at: null, days_left: null,
      beta: false, device_bound: true, wg_servers: [],
      plan: "free", trial_active: true, trial_days_left: 2,
      in_grace_period: false, grace_days_left: 0, expired: false,
+     data_exhausted: false,
+     data_wallet: {package: "trial", total_bytes: 3221225472,
+                   used_bytes: 1073741824, remaining_bytes: 2147483648,
+                   expires_at: "2026-11-04T00:00:00Z"},
      is_admin: false},
     {id: 3, username: "usman_99", email: "usman@example.com",
      subscription_status: "pending", expires_at: "2026-10-28T00:00:00Z",
      days_left: 0, beta: false, device_bound: false, wg_servers: ["ph"],
      plan: "free", trial_active: false, trial_days_left: 0,
      in_grace_period: false, grace_days_left: 0, expired: true,
+     data_exhausted: true,
+     data_wallet: {package: "trial", total_bytes: 3221225472,
+                   used_bytes: 3221225472, remaining_bytes: 0,
+                   expires_at: "2026-10-28T00:00:00Z"},
      is_admin: false}
   ],
   resets: [
@@ -430,15 +463,26 @@ function loadStats() {
     var rows = "";
     Object.keys(s.users_per_server || {}).forEach(function (id) {
       var sv = s.users_per_server[id];
+      /* v9.5: per-server bandwidth (counted by the usage collector
+       * since the v9.5 deploy) + the highest crossed alert level. */
+      var usage = (s.server_usage && s.server_usage[id]) || null;
+      var usageCell = "—";
+      if (usage) {
+        usageCell = fmtBytes(usage.used_bytes) + " / "
+          + fmtBytes(usage.capacity_bytes) + " (" + usage.pct + "%)"
+          + (usage.alerts && usage.alerts.length
+            ? " — ALERT: " + usage.alerts.join(", ") : "");
+      }
       rows += "<tr><td>" + esc(id.toUpperCase()) + "</td><td>"
-        + esc(sv.users) + "</td><td>" + esc(sv.status) + "</td></tr>";
+        + esc(sv.users) + "</td><td>" + esc(sv.status) + "</td><td>"
+        + usageCell + "</td></tr>";
     });
     document.querySelector("#serverTable tbody").innerHTML =
-      rows || '<tr><td colspan="3" class="muted">No servers enabled yet.</td></tr>';
+      rows || '<tr><td colspan="4" class="muted">No servers enabled yet.</td></tr>';
     var bw = s.bandwidth;
     $("bwLine").textContent = bw && bw.rx_bytes != null
       ? "Bandwidth this month: " + fmtBytes(bw.rx_bytes + bw.tx_bytes)
-        + " of 1 TB" + (s.alerts && s.alerts.length
+        + " of 2 TB" + (s.alerts && s.alerts.length
           ? " — ALERT: " + s.alerts.join(", ") : "")
       : "Bandwidth: not reported yet (vnstat not installed on the server).";
     var pb = $("payBadge"), rb = $("resetBadge");
@@ -457,7 +501,24 @@ function statCard(n, label) {
 function fmtBytes(b) {
   if (b < 1024 * 1024) return (b / 1024).toFixed(1) + " KB";
   if (b < 1024 * 1024 * 1024) return (b / 1048576).toFixed(1) + " MB";
-  return (b / 1073741824).toFixed(2) + " GB";
+  if (b < 1024 * 1024 * 1024 * 1024) return (b / 1073741824).toFixed(2) + " GB";
+  return (b / 1099511627776).toFixed(2) + " TB";
+}
+/* v9.5: one line per wallet for the Users table. "—" when the user has
+ * no wallet (beta / owner / admin / pre-v9.5 accounts). */
+function walletLabel(w) {
+  if (!w) return "—";
+  return esc(w.package || "—");
+}
+function walletData(w) {
+  if (!w) return "—";
+  return fmtBytes(w.used_bytes || 0) + " / " + fmtBytes(w.total_bytes || 0);
+}
+/* v9.5: one <option> for the approval package picker. */
+function pkgOption(id, label, selected) {
+  return '<option value="' + id + '"'
+    + (id === selected ? " selected" : "") + ">"
+    + esc(label) + "</option>";
 }
 
 function loadPayments() {
@@ -466,18 +527,30 @@ function loadPayments() {
       .map(function (p) {
         var actions = "";
         if (p.status === "pending") {
-          actions = '<button class="rowbtn approve" data-act="approve" data-id="'
+          /* v9.5: the admin picks the package at approval. The
+           * package the user sent with the payment is pre-selected;
+           * otherwise Standard (Rs 200 / 30 GB) is the default. */
+          var pkg = p.package_id || "standard";
+          actions = '<select data-pkg-for="' + p.id + '">'
+            + pkgOption("basic", "Rs 150 — 20 GB", pkg)
+            + pkgOption("standard", "Rs 200 — 30 GB", pkg)
+            + pkgOption("plus", "Rs 300 — 50 GB", pkg)
+            + '</select> '
+            + '<button class="rowbtn approve" data-act="approve" data-id="'
             + p.id + '">Approve</button>'
             + '<button class="rowbtn reject" data-act="reject" data-id="'
             + p.id + '">Reject</button>';
         }
+        var statusCell = pill(p.status)
+          + (p.package_id ? "<br><span class='muted'>"
+            + esc(p.package_id) + "</span>" : "");
         return "<tr><td>" + esc(p.username) + "<br><span class='muted'>"
           + esc(p.email) + "</span></td><td>" + esc(p.to_account) + "</td><td>"
           + esc(p.payer_name) + "<br><span class='muted'>" + esc(p.payer_email)
           + "</span></td><td>" + esc(p.from_account) + "</td><td>"
           + esc(p.holder_name) + "<br><span class='muted'>" + esc(p.tid)
           + "</span></td><td>" + fmtDate(p.created_at) + "</td><td>"
-          + pill(p.status) + "</td><td>" + actions + "</td></tr>";
+          + statusCell + "</td><td>" + actions + "</td></tr>";
       }).join("");
     document.querySelector("#payTable tbody").innerHTML = rows
       || '<tr><td colspan="8" class="muted">No ' + esc(payFilter)
@@ -513,6 +586,8 @@ function loadUsers() {
       }
       return "<tr><td>" + esc(u.username) + "</td><td>" + esc(u.email)
         + "</td><td>" + statusBadge(u) + "</td><td>"
+        + walletLabel(u.data_wallet) + "</td><td>"
+        + walletData(u.data_wallet) + "</td><td>"
         + fmtDate(u.expires_at) + "</td><td>"
         + (days == null ? "—" : esc(days)) + "</td><td>"
         + (u.beta ? '<span class="pill beta">beta</span>' : "—") + "</td><td>"
@@ -521,7 +596,7 @@ function loadUsers() {
         + actions + "</td></tr>";
     }).join("");
     document.querySelector("#userTable tbody").innerHTML = rows
-      || '<tr><td colspan="9" class="muted">No users yet.</td></tr>';
+      || '<tr><td colspan="11" class="muted">No users yet.</td></tr>';
   };
   if (DEMO) { render(DEMO_DATA.users); return; }
   api("GET", "/admin/users").then(function (j) {
@@ -560,10 +635,21 @@ document.addEventListener("click", function (ev) {
   if (DEMO) { alert("Demo mode — this action does nothing."); return; }
 
   if (act === "approve") {
-    if (!confirm("Approve payment #" + id + "? This activates the user's "
-        + "subscription for 30 days.")) return;
-    api("POST", "/admin/payments/" + id + "/approve", {}).then(function (j) {
-      alert("Approved. New expiry: " + fmtDate(j.expires_at));
+    /* v9.5: the package comes from the picker next to the button
+     * (Standard when the picker is missing). Approval issues a FRESH
+     * wallet for that package — no rollover of unused data. */
+    var pkgSel = document.querySelector('select[data-pkg-for="' + id + '"]');
+    var pkg = pkgSel ? pkgSel.value : "standard";
+    var pkgName = pkg === "basic" ? "Basic (20 GB / Rs 150)"
+      : pkg === "plus" ? "Plus (50 GB / Rs 300)"
+      : "Standard (30 GB / Rs 200)";
+    if (!confirm("Approve payment #" + id + " with package " + pkgName
+        + "? This activates the user's subscription for 30 days with a "
+        + "fresh data wallet (no rollover).")) return;
+    api("POST", "/admin/payments/" + id + "/approve",
+        {package_id: pkg}).then(function (j) {
+      alert("Approved (" + pkgName + "). New expiry: "
+        + fmtDate(j.expires_at));
       loadPayments(); loadStats(); loadUsers();
     }).catch(function (e) { showErr("Approve failed: " + e.message); });
   } else if (act === "reject") {
