@@ -237,6 +237,12 @@ function statusBadge(u) {
     label = "Grace"; cls = "grace"; days = u.grace_days_left;
   } else if (u.expired || u.subscription_status === "expired") {
     label = "Expired"; cls = "expired"; days = 0;
+  } else if (u.beta) {
+    /* v9.3 fix (2026-11-02): a beta tester is NOT a paying premium
+     * user — the old fallback labelled every active row "Premium",
+     * so beta testers looked like payers. Beta has no expiry, so
+     * days stays null ("—" in Days left, honest). */
+    label = "Beta"; cls = "beta";
   } else if (u.subscription_status === "active") {
     label = "Premium"; cls = "active"; days = u.days_left;
   } else {
