@@ -68,6 +68,9 @@
             padding: 5px 10px; cursor: pointer; font-size: 13px; margin: 2px 2px 2px 0; }
   .rowbtn.approve { border-color: var(--green); color: #15803D; }
   .rowbtn.reject, .rowbtn.revoke { border-color: var(--red); color: var(--red); }
+  /* v9.7: "Last Active" cell — inactive 7+ days is highlighted red
+   * so accounts to remove stand out at a glance. */
+  .inactive { color: var(--red); font-weight: 700; }
   .muted { color: var(--muted); font-size: 13px; }
   .wrap { overflow-x: auto; }
 </style>
@@ -138,10 +141,12 @@
 
     <div id="tab-users" hidden>
       <div class="card">
+        <!-- v9.7: broadcast a message to every user (push + inbox). -->
+        <button class="rowbtn" data-act="broadcast">Broadcast to all users</button>
         <div class="wrap"><table id="userTable">
           <thead><tr><th>Username</th><th>Email</th><th>Status</th><th>Package</th>
                       <th>Data used / total</th><th>Expires</th>
-                      <th>Days left</th><th>Beta</th><th>Device</th><th>WG servers</th><th></th></tr></thead>
+                      <th>Days left</th><th>Last Active</th><th>Beta</th><th>Device</th><th>WG servers</th><th></th></tr></thead>
           <tbody></tbody>
         </table></div>
       </div>
@@ -160,13 +165,18 @@
 
 <script>
 "use strict";
-/* Red Hulk VPN admin panel — Batch 4, v9.5 (2026-11-02): data packages
+/* Red Hulk VPN admin panel — Batch 4, v9.7 (2026-11-04): Last Active
+ * column (API records last_seen on every authenticated call) +
+ * admin messages (per-user Message button + Broadcast; POST
+ * /admin/message stores the message and pushes it via FCM, the app
+ * shows it as a notification + an in-app card). v9.5 data packages
  * (Basic 20 GB / Rs 150, Standard 30 GB / Rs 200, Plus 50 GB / Rs 300)
  * + package picker on payment approval + per-user wallet (package,
  * used / remaining) in the Users table + per-server bandwidth usage
  * and 50/70/80/90% alerts in Overview. v9.3 Status badges + Cancel
  * Premium + Delete Account and v9.4 Not approved + reason boxes are
- * kept; stable device id (v17) kept.
+ * kept; stable device id (v17) kept. NO auto-delete anywhere —
+ * removal stays manual via Delete Account.
  *
  * API base: the DuckDNS hostname (live from the Day 5 deploy).
  * Until DuckDNS + Let's Encrypt land, use the UK node's IP instead:
@@ -214,6 +224,25 @@ function fmtDate(iso) {
   var d = new Date(iso);
   return isNaN(d) ? esc(iso) : d.toLocaleDateString("en-GB", {
     day: "numeric", month: "short", year: "numeric"});
+}
+/* v9.7: relative "Last Active" for the Users table. Null = the user
+ * has never called the API since the v9.7 deploy ("Never" — the
+ * column did not exist before, so no date can be shown). 7+ days
+ * inactive gets the .inactive (red) class. */
+function fmtLastSeen(iso) {
+  if (!iso) return '<span class="muted">Never</span>';
+  var d = new Date(iso);
+  if (isNaN(d)) return esc(iso);
+  var mins = Math.floor((Date.now() - d.getTime()) / 60000);
+  if (mins < 0) mins = 0;
+  var label;
+  if (mins < 1) label = "Just now";
+  else if (mins < 60) label = mins + "m ago";
+  else if (mins < 1440) label = Math.floor(mins / 60) + "h ago";
+  else label = Math.floor(mins / 1440) + "d ago";
+  var inactive = mins >= 7 * 1440;
+  return inactive ? '<span class="inactive">' + esc(label) + "</span>"
+                  : esc(label);
 }
 function showErr(msg) {
   var box = $("errBox");
@@ -315,6 +344,7 @@ var DEMO_DATA = {
      subscription_status: "active", expires_at: "2026-11-30T00:00:00Z",
      days_left: 29, beta: false, device_bound: true, wg_servers: ["uk"],
      plan: "premium", trial_active: false, trial_days_left: 0,
+     last_seen: "2026-11-04T07:30:00Z",
      in_grace_period: false, grace_days_left: 0, expired: false,
      data_exhausted: false,
      data_wallet: {package: "standard", total_bytes: 32212254720,
@@ -325,6 +355,7 @@ var DEMO_DATA = {
      subscription_status: "pending", expires_at: null, days_left: null,
      beta: false, device_bound: true, wg_servers: [],
      plan: "free", trial_active: true, trial_days_left: 2,
+     last_seen: "2026-10-26T08:00:00Z",
      in_grace_period: false, grace_days_left: 0, expired: false,
      data_exhausted: false,
      data_wallet: {package: "trial", total_bytes: 3221225472,
@@ -335,6 +366,7 @@ var DEMO_DATA = {
      subscription_status: "pending", expires_at: "2026-10-28T00:00:00Z",
      days_left: 0, beta: false, device_bound: false, wg_servers: ["ph"],
      plan: "free", trial_active: false, trial_days_left: 0,
+     last_seen: null,
      in_grace_period: false, grace_days_left: 0, expired: true,
      data_exhausted: true,
      data_wallet: {package: "trial", total_bytes: 3221225472,
@@ -580,6 +612,10 @@ function loadUsers() {
           + '">Cancel Premium</button>';
       }
       if (!u.is_admin) {
+        /* v9.7: message one user (push + inbox card in the app). */
+        actions += '<button class="rowbtn" data-act="message" data-id="'
+          + u.id + '" data-name="' + esc(u.username)
+          + '">Message</button>';
         actions += '<button class="rowbtn reject" data-act="delete" data-id="'
           + u.id + '" data-name="' + esc(u.username)
           + '">Delete Account</button>';
@@ -590,13 +626,14 @@ function loadUsers() {
         + walletData(u.data_wallet) + "</td><td>"
         + fmtDate(u.expires_at) + "</td><td>"
         + (days == null ? "—" : esc(days)) + "</td><td>"
+        + fmtLastSeen(u.last_seen) + "</td><td>"
         + (u.beta ? '<span class="pill beta">beta</span>' : "—") + "</td><td>"
         + (u.device_bound ? "Bound" : "—") + "</td><td>"
         + esc((u.wg_servers || []).join(", ") || "—") + "</td><td>"
         + actions + "</td></tr>";
     }).join("");
     document.querySelector("#userTable tbody").innerHTML = rows
-      || '<tr><td colspan="11" class="muted">No users yet.</td></tr>';
+      || '<tr><td colspan="12" class="muted">No users yet.</td></tr>';
   };
   if (DEMO) { render(DEMO_DATA.users); return; }
   api("GET", "/admin/users").then(function (j) {
@@ -626,6 +663,30 @@ function loadResets() {
 }
 
 /* ---------- row actions (event delegation) ---------- */
+/* v9.7: send an admin message — one user (userId) or broadcast
+ * (userId null). Title max 100 chars, body max 500 (the API
+ * enforces both). The API stores the message first, then pushes it
+ * via FCM when configured; the response reports sent / failed /
+ * fcm_configured so the admin knows whether a push went out or the
+ * user will only see it in the app inbox. */
+function sendAdminMessage(userId, who) {
+  var title = prompt("Message " + who + " — title (max 100 chars):", "");
+  if (title === null) return;
+  title = title.trim();
+  if (!title) { alert("Title is required."); return; }
+  var body = prompt("Message body (max 500 chars):", "");
+  if (body === null) return;
+  body = body.trim();
+  if (!body) { alert("Body is required."); return; }
+  api("POST", "/admin/message", {user_id: userId, title: title, body: body})
+    .then(function (j) {
+      alert("Message sent to " + who + ". Push: " + j.sent + " delivered, "
+        + j.failed + " failed"
+        + (j.fcm_configured ? "."
+           : " (FCM not configured — the user will see it in the app inbox)."));
+    }).catch(function (e) { showErr("Message failed: " + e.message); });
+}
+
 document.addEventListener("click", function (ev) {
   var b = ev.target.closest("button[data-act]");
   if (!b) return;
@@ -634,7 +695,12 @@ document.addEventListener("click", function (ev) {
   var name = b.getAttribute("data-name") || ("#" + id);
   if (DEMO) { alert("Demo mode — this action does nothing."); return; }
 
-  if (act === "approve") {
+  if (act === "message") {
+    sendAdminMessage(parseInt(id, 10), name);
+  } else if (act === "broadcast") {
+    if (!confirm("Broadcast a message to ALL users?")) return;
+    sendAdminMessage(null, "all users");
+  } else if (act === "approve") {
     /* v9.5: the package comes from the picker next to the button
      * (Standard when the picker is missing). Approval issues a FRESH
      * wallet for that package — no rollover of unused data. */
